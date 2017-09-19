@@ -5,13 +5,14 @@ import (
 	"time"
 	"net/http"
 	"sync"
-	// "io/ioutil"
-	// "html"
 	"github.com/PuerkitoBio/goquery"
-	// "github.com/moovweb/gokogiri"
 	"io"
 	"strings"
+	"flag"
+	//"sync"
 )
+
+var refsCount int
 
 func getSitesList() []string {
 	sitesList := []string{
@@ -70,8 +71,6 @@ func crawler(urls chan string, body chan io.Reader, errors chan error, wg *sync.
 
 func parser(body chan io.Reader, backlinks chan BacklinksList, errors chan error, wg *sync.WaitGroup) {
 	for {
-		// fmt.Println("start parse")
-
 		doc, err := goquery.NewDocumentFromReader(<- body)
 	 	if err != nil {
 			fmt.Println(err)
@@ -79,10 +78,14 @@ func parser(body chan io.Reader, backlinks chan BacklinksList, errors chan error
 		}
 
 		doc.Find("a").Each(func(i int, s *goquery.Selection) {
-			Title := strings.TrimSpace(s.Text())
 			Href, _ := s.Attr("href")
+			if (!strings.HasPrefix(Href, "http")) {
+				return
+			}
+			Title := strings.TrimSpace(s.Text())
 
 			fmt.Println("   ", Title, ":", Href)
+			refsCount++
 		})
 		wg.Done()
 	}
@@ -95,7 +98,7 @@ func getFromQueue(index int, urls chan string, wg *sync.WaitGroup) {
 
 	for _, url := range sitesList {
 		urls <- url
-		// RemoveFromQueue(sitesList, index)
+		RemoveFromQueue(sitesList, index)
 		wg.Done()
 	}
 
@@ -103,15 +106,14 @@ func getFromQueue(index int, urls chan string, wg *sync.WaitGroup) {
 	// RemoveFromQueue(sitesList, index)
 }
 
-// func rangeChan(urls chan string, wg *sync.WaitGroup) {
-// 	defer wg.Done()
-// 	fmt.Println(<- urls)
-// 	go getFromQueue(urls, wg)
-// 	go rangeChan(urls, wg)
-// }
-
 func RemoveFromQueue(s []string, index int) []string {
     return append(s[:index], s[index+1:]...)
+}
+
+var workersCount int
+func initFlags() {
+	flag.IntVar(&workersCount, "workersCount", 1, "")
+	flag.Parse()
 }
 
 func main() {
@@ -126,51 +128,19 @@ func main() {
 	errors := make(chan error)
 	sitesList := getSitesList()
 	sitesListLength := len(sitesList)
+	initFlags()
 
-	wg.Add(sitesListLength*3)
-	go getFromQueue(0, urls, &wg)
-	go crawler(urls, body, errors, &wg)
-	go parser(body, backlinks, errors, &wg)
+	wg.Add(sitesListLength*3*workersCount)
+	for i:=0;i<workersCount;i++ {
+		go getFromQueue(0, urls, &wg)
+		go crawler(urls, body, errors, &wg)
+		go parser(body, backlinks, errors, &wg)
+	}
 	wg.Wait()
 	fmt.Println("end")
 
 
 	end := time.Now()
 	fmt.Println("\n")
-	fmt.Println(end.Sub(start))
+	fmt.Println(end.Sub(start), "refsCount: ", refsCount)
 }
-
-// package main
-//
-// import (
-//     "fmt"
-//     "time"
-// )
-//
-// func pinger(c chan string) {
-//     for i := 0; ; i++ {
-//         c <- "ping"
-//     }
-// }
-// func ponger(c chan string) {
-//     for i := 0; ; i++ {
-//         c <- "pong"
-//     }
-// }
-// func printer(c chan string) {
-//     // for {
-//     msg := <- c
-//     fmt.Println(msg)
-//     time.Sleep(time.Second * 1)
-//     // }
-// }
-// func main() {
-//     var c chan string = make(chan string)
-//
-//     go pinger(c)
-//     go ponger(c)
-//     go printer(c)
-//
-//     var input string
-//     fmt.Scanln(&input)
-// }
