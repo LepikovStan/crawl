@@ -14,8 +14,29 @@ import (
 
 var refsCount int
 
-func getSitesList() []string {
-	sitesList := []string{
+type Url struct {
+	mux sync.Mutex
+	url string
+}
+
+func (u *Url) get() string {
+	u.mux.Lock()
+	defer u.mux.Unlock()
+	return u.url
+}
+
+func (u *Url) set(url string) {
+	u.mux.Lock()
+	u.url  = url
+	u.mux.Unlock()
+}
+
+func (u *Url) unlock(url string) {
+	u.mux.Unlock()
+}
+
+func getSitesList() *[]*Url {
+	urlList := []string{
 		"http://donothingfor2minutes.com/",
 		"http://stenadobra.ru/",
 		"http://humandescent.com",
@@ -38,7 +59,14 @@ func getSitesList() []string {
 		// "http://www.catsboobs.com/",
 		// "http://www.incredibox.com/",
 	}
-	return sitesList
+	var sitesList []*Url
+	for _, url := range urlList {
+		newUrl := new(Url)
+		newUrl.set(url)
+		sitesList = append(sitesList, newUrl)
+	}
+
+	return &sitesList
 }
 
 type Ref struct {
@@ -51,10 +79,11 @@ type BacklinksList struct {
 	Links []Ref
 }
 
-func crawler(urls chan string, body chan io.Reader, errors chan error, wg *sync.WaitGroup) {
+func crawler(urls chan *Url, body chan io.Reader, errors chan error, wg *sync.WaitGroup) {
 	for {
 		defer fmt.Println("ae1")
-		url := <- urls
+		urlItem := <- urls
+		url := urlItem.get()
 		fmt.Println("start crawl", url)
 
 		resp, err := http.Get(url)
@@ -91,22 +120,27 @@ func parser(body chan io.Reader, backlinks chan BacklinksList, errors chan error
 	}
 }
 
-func getFromQueue(index int, urls chan string, wg *sync.WaitGroup) {
+func getFromQueue(urls chan *Url, wg *sync.WaitGroup) {
 	// defer wg.Done()
 	sitesList := getSitesList()
+	sitesListLen := len(sitesList)
 	// fmt.Println("getFromQueue")
 
-	for _, url := range sitesList {
-		urls <- url
-		RemoveFromQueue(sitesList, index)
-		wg.Done()
+	for i:=0;i<sitesListLen;i++ {
+
 	}
+
+	//for index, urlItem := range sitesList {
+	//	urls <- urlItem
+	//	sitesList = RemoveFromQueue(sitesList, index)
+	//	wg.Done()
+	//}
 
 	// urls <- sitesList[index]
 	// RemoveFromQueue(sitesList, index)
 }
 
-func RemoveFromQueue(s []string, index int) []string {
+func RemoveFromQueue(s []string, index int) *[]string {
     return append(s[:index], s[index+1:]...)
 }
 
@@ -122,7 +156,7 @@ func main() {
 
 
 	var wg sync.WaitGroup
-	urls := make(chan string)
+	urls := make(chan *Url)
 	body := make(chan io.Reader)
 	backlinks := make(chan BacklinksList)
 	errors := make(chan error)
@@ -132,7 +166,7 @@ func main() {
 
 	wg.Add(sitesListLength*3*workersCount)
 	for i:=0;i<workersCount;i++ {
-		go getFromQueue(0, urls, &wg)
+		go getFromQueue(urls, &wg)
 		go crawler(urls, body, errors, &wg)
 		go parser(body, backlinks, errors, &wg)
 	}
