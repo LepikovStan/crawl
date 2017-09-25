@@ -1,25 +1,79 @@
+//package main
+//
+//import (
+//	"fmt"
+//	"time"
+//)
+//
+//func pinger(c chan int) {
+//	for i := 0; i<5; i++ {
+//		c <-  i
+//	}
+//}
+//func printer(c chan int) {
+//	for {
+//		msg := <- c
+//		fmt.Println(msg)
+//		if msg == 3 {
+//			go func () {
+//				c <- msg
+//			}()
+//		}
+//		time.Sleep(time.Second * 1)
+//		//c <- m
+//		//time.Sleep(time.Second * 1)
+//	}
+//}
+//
+//func printer2(d chan int) {
+//	for {
+//		msg := <- d
+//		fmt.Println(msg)
+//		//time.Sleep(time.Second * 1)
+//	}
+//}
+//func ponger(c chan int) {
+//	for i := 0; i<5; i++ {
+//		c <- i
+//	}
+//}
+//func main() {
+//	var c chan int = make(chan int)
+//
+//	go pinger(c)
+//	for i:=0;i<1;i++ {
+//		go printer(c)
+//	}
+//
+//	var input string
+//	fmt.Scanln(&input)
+//}
+
 package main
 
 import (
 	"fmt"
 	"time"
 	"net/http"
-	"sync"
 	"github.com/PuerkitoBio/goquery"
 	"io"
 	"strings"
 	"flag"
-	//"sync"
+	"sync"
+	"os"
+	"bytes"
 )
 
 var refsCount int
 
-func getSitesList() []string {
+func getInitUrls() []string {
 	sitesList := []string{
-		"http://donothingfor2minutes.com/",
-		"http://stenadobra.ru/",
-		"http://humandescent.com",
-		// "http://thefirstworldwidewebsitewerenothinghappens.com",
+		//"http://calm.com",
+		//"http://donothingfor2minutes.com/",
+		//"https://hosting.reg.ru/",
+		//"http://stenadobra.ru/",
+		//"http://humandescent.com",
+		 "http://thefirstworldwidewebsitewerenothinghappens.com",
 		// "http://button.dekel.ru",
 		// "http://www.randominio.com/",
 		// "http://thenicestplaceontheinter.net/",
@@ -51,69 +105,90 @@ type BacklinksList struct {
 	Links []Ref
 }
 
-func crawler(urls chan string, body chan io.Reader, errors chan error, wg *sync.WaitGroup) {
+func crawler(urls chan string, body chan io.Reader) {
 	for {
-		defer fmt.Println("ae1")
 		url := <- urls
 		fmt.Println("start crawl", url)
 
 		resp, err := http.Get(url)
 		if (err != nil) {
-			errors <- err
+			fmt.Println(err)
+			//errors <- err
 		}
 
 		if resp.StatusCode == 200 {
 		    body <- resp.Body
 		}
-		wg.Done()
 	}
 }
 
-func parser(body chan io.Reader, backlinks chan BacklinksList, errors chan error, wg *sync.WaitGroup) {
+func setToQueue (urls chan string, urlList[]string) {
+	for _, url := range urlList {
+		urls <- url
+	}
+}
+
+var workersCount int
+var maxDepth int
+var currentDepth int
+func initFlags() {
+	flag.IntVar(&workersCount, "maxWorkers", 1, "")
+	flag.IntVar(&maxDepth, "maxDepth", 1, "")
+	flag.Parse()
+}
+
+
+func parser(
+	urls chan string,
+	body chan io.Reader,
+	result chan string,
+	currentDepth *int,
+	maxDepth int,
+	wg *sync.WaitGroup,
+) {
 	for {
-		doc, err := goquery.NewDocumentFromReader(<- body)
-	 	if err != nil {
+		fmt.Println("parser")
+		siteBody := <- body
+		doc, err := goquery.NewDocumentFromReader(siteBody)
+		urlsList := []string{}
+
+		if err != nil {
 			fmt.Println(err)
-	 		errors <- err
 		}
+
 
 		doc.Find("a").Each(func(i int, s *goquery.Selection) {
 			Href, _ := s.Attr("href")
 			if (!strings.HasPrefix(Href, "http")) {
 				return
 			}
-			Title := strings.TrimSpace(s.Text())
+			// Title := strings.TrimSpace(s.Text())
+			urlsList = append(urlsList, Href)
 
-			fmt.Println("   ", Title, ":", Href)
+			// fmt.Println("   ", Title, ":", Href)
+			// result <-
 			refsCount++
 		})
-		wg.Done()
+		if (*currentDepth < maxDepth) {
+			*currentDepth++
+			go setToQueue(urls, urlsList)
+		} else {
+			fmt.Println("Depth is end", refsCount)
+			wg.Done()
+		}
 	}
 }
 
-func getFromQueue(index int, urls chan string, wg *sync.WaitGroup) {
-	// defer wg.Done()
-	sitesList := getSitesList()
-	// fmt.Println("getFromQueue")
-
-	for _, url := range sitesList {
-		urls <- url
-		RemoveFromQueue(sitesList, index)
-		wg.Done()
+func writer(result chan string, resultFile *os.File) {
+	for {
+		var buffer bytes.Buffer
+		resultLine := <- result
+		buffer.WriteString(resultLine)
+		buffer.WriteString("\n")
+		if _, err := resultFile.WriteString(buffer.String()); err != nil {
+			fmt.Println(err)
+		}
 	}
-
-	// urls <- sitesList[index]
-	// RemoveFromQueue(sitesList, index)
-}
-
-func RemoveFromQueue(s []string, index int) []string {
-    return append(s[:index], s[index+1:]...)
-}
-
-var workersCount int
-func initFlags() {
-	flag.IntVar(&workersCount, "workersCount", 1, "")
-	flag.Parse()
 }
 
 func main() {
@@ -124,23 +199,36 @@ func main() {
 	var wg sync.WaitGroup
 	urls := make(chan string)
 	body := make(chan io.Reader)
-	backlinks := make(chan BacklinksList)
-	errors := make(chan error)
-	sitesList := getSitesList()
-	sitesListLength := len(sitesList)
-	initFlags()
-
-	wg.Add(sitesListLength*3*workersCount)
-	for i:=0;i<workersCount;i++ {
-		go getFromQueue(0, urls, &wg)
-		go crawler(urls, body, errors, &wg)
-		go parser(body, backlinks, errors, &wg)
+	result := make(chan string)
+	resultFile, err := os.OpenFile("result.log", os.O_APPEND|os.O_CREATE, 0755)
+	if err != nil {
+		fmt.Println(err)
 	}
+	backlinksList = new(BacklinksList)
+	//backlinks := make(chan BacklinksList)
+	//errors := make(chan error)
+	initFlags()
+	//wgCounter := 2*workersCount+1
+	//fmt.Println("wgCounter", wgCounter)
+	//
+	wg.Add(5)
+	urlsList := getInitUrls()
+	currentDepth = 1
+
+	go setToQueue(urls, urlsList)
+	for i:=0;i<workersCount;i++ {
+		go crawler(urls, body)
+		go parser(urls, body, result, &currentDepth, maxDepth, &wg)
+	}
+	go writer(result, resultFile)
 	wg.Wait()
-	fmt.Println("end")
-
-
+	//fmt.Println("end")
+	//
+	//
 	end := time.Now()
 	fmt.Println("\n")
 	fmt.Println(end.Sub(start), "refsCount: ", refsCount)
+
+	// var input string
+	// fmt.Scanln(&input)
 }
