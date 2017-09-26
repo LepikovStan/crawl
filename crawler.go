@@ -1,54 +1,3 @@
-//package main
-//
-//import (
-//	"fmt"
-//	"time"
-//)
-//
-//func pinger(c chan int) {
-//	for i := 0; i<5; i++ {
-//		c <-  i
-//	}
-//}
-//func printer(c chan int) {
-//	for {
-//		msg := <- c
-//		fmt.Println(msg)
-//		if msg == 3 {
-//			go func () {
-//				c <- msg
-//			}()
-//		}
-//		time.Sleep(time.Second * 1)
-//		//c <- m
-//		//time.Sleep(time.Second * 1)
-//	}
-//}
-//
-//func printer2(d chan int) {
-//	for {
-//		msg := <- d
-//		fmt.Println(msg)
-//		//time.Sleep(time.Second * 1)
-//	}
-//}
-//func ponger(c chan int) {
-//	for i := 0; i<5; i++ {
-//		c <- i
-//	}
-//}
-//func main() {
-//	var c chan int = make(chan int)
-//
-//	go pinger(c)
-//	for i:=0;i<1;i++ {
-//		go printer(c)
-//	}
-//
-//	var input string
-//	fmt.Scanln(&input)
-//}
-
 package main
 
 import (
@@ -58,8 +7,9 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"io"
 	"strings"
+	"strconv"
 	"flag"
-	"sync"
+	//"sync"
 	"os"
 	"bytes"
 )
@@ -72,8 +22,8 @@ func getInitUrls() []string {
 		//"http://donothingfor2minutes.com/",
 		//"https://hosting.reg.ru/",
 		//"http://stenadobra.ru/",
-		//"http://humandescent.com",
-		 "http://thefirstworldwidewebsitewerenothinghappens.com",
+		"http://humandescent.com",
+		 //"http://thefirstworldwidewebsitewerenothinghappens.com",
 		// "http://button.dekel.ru",
 		// "http://www.randominio.com/",
 		// "http://thenicestplaceontheinter.net/",
@@ -100,12 +50,12 @@ type Ref struct {
 	Href string
 }
 
-type BacklinksList struct {
+type Backlink struct {
 	Url string
-	Links []Ref
+	Body io.Reader
 }
 
-func crawler(urls chan string, body chan io.Reader) {
+func crawler(urls chan string, body chan Backlink) {
 	for {
 		url := <- urls
 		fmt.Println("start crawl", url)
@@ -117,7 +67,11 @@ func crawler(urls chan string, body chan io.Reader) {
 		}
 
 		if resp.StatusCode == 200 {
-		    body <- resp.Body
+			backlink := Backlink{
+				Url: url,
+				Body: resp.Body,
+			}
+		    body <- backlink
 		}
 	}
 }
@@ -140,16 +94,16 @@ func initFlags() {
 
 func parser(
 	urls chan string,
-	body chan io.Reader,
+	body chan Backlink,
 	result chan string,
 	currentDepth *int,
 	maxDepth int,
-	wg *sync.WaitGroup,
+	//wg *sync.WaitGroup,
 ) {
 	for {
 		fmt.Println("parser")
-		siteBody := <- body
-		doc, err := goquery.NewDocumentFromReader(siteBody)
+		backlink := <- body
+		doc, err := goquery.NewDocumentFromReader(backlink.Body)
 		urlsList := []string{}
 
 		if err != nil {
@@ -165,8 +119,13 @@ func parser(
 			// Title := strings.TrimSpace(s.Text())
 			urlsList = append(urlsList, Href)
 
-			// fmt.Println("   ", Title, ":", Href)
-			// result <-
+			fmt.Println("   ", backlink.Url, "->", Href)
+			var buffer bytes.Buffer
+			buffer.WriteString(backlink.Url)
+			buffer.WriteString(" -> ")
+			buffer.WriteString(Href)
+			buffer.WriteString("\n")
+			result <- buffer.String()
 			refsCount++
 		})
 		if (*currentDepth < maxDepth) {
@@ -174,18 +133,14 @@ func parser(
 			go setToQueue(urls, urlsList)
 		} else {
 			fmt.Println("Depth is end", refsCount)
-			wg.Done()
+			//wg.Done()
 		}
 	}
 }
 
 func writer(result chan string, resultFile *os.File) {
 	for {
-		var buffer bytes.Buffer
-		resultLine := <- result
-		buffer.WriteString(resultLine)
-		buffer.WriteString("\n")
-		if _, err := resultFile.WriteString(buffer.String()); err != nil {
+		if _, err := resultFile.WriteString(<- result); err != nil {
 			fmt.Println(err)
 		}
 	}
@@ -196,32 +151,36 @@ func main() {
 	start := time.Now()
 
 
-	var wg sync.WaitGroup
+	//var wg sync.WaitGroup
+	var buffer bytes.Buffer
 	urls := make(chan string)
-	body := make(chan io.Reader)
+	body := make(chan Backlink)
 	result := make(chan string)
-	resultFile, err := os.OpenFile("result.log", os.O_APPEND|os.O_CREATE, 0755)
+
+	buffer.WriteString("result.")
+	buffer.WriteString(strconv.FormatInt(time.Now().Unix(), 10))
+	buffer.WriteString(".log")
+	resultFile, err := os.OpenFile(buffer.String(), os.O_APPEND|os.O_CREATE, 0755)
 	if err != nil {
 		fmt.Println(err)
 	}
-	backlinksList = new(BacklinksList)
 	//backlinks := make(chan BacklinksList)
 	//errors := make(chan error)
 	initFlags()
 	//wgCounter := 2*workersCount+1
 	//fmt.Println("wgCounter", wgCounter)
 	//
-	wg.Add(5)
+	//wg.Add(5)
 	urlsList := getInitUrls()
 	currentDepth = 1
 
 	go setToQueue(urls, urlsList)
 	for i:=0;i<workersCount;i++ {
 		go crawler(urls, body)
-		go parser(urls, body, result, &currentDepth, maxDepth, &wg)
+		go parser(urls, body, result, &currentDepth, maxDepth)
 	}
 	go writer(result, resultFile)
-	wg.Wait()
+	//wg.Wait()
 	//fmt.Println("end")
 	//
 	//
@@ -229,6 +188,6 @@ func main() {
 	fmt.Println("\n")
 	fmt.Println(end.Sub(start), "refsCount: ", refsCount)
 
-	// var input string
-	// fmt.Scanln(&input)
+	var input string
+	fmt.Scanln(&input)
 }
