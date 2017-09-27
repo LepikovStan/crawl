@@ -12,6 +12,7 @@ import (
 	//"sync"
 	"os"
 	"bytes"
+	"sync"
 )
 
 var refsCount int
@@ -62,7 +63,7 @@ func crawler(urls chan string, body chan Backlink) {
 
 		resp, err := http.Get(url)
 		if (err != nil) {
-			fmt.Println(err)
+			fmt.Println("crawler error", err)
 			//errors <- err
 		}
 
@@ -98,16 +99,17 @@ func parser(
 	result chan string,
 	currentDepth *int,
 	maxDepth int,
-	//wg *sync.WaitGroup,
+	wg *sync.WaitGroup,
 ) {
 	for {
 		fmt.Println("parser")
 		backlink := <- body
+
 		doc, err := goquery.NewDocumentFromReader(backlink.Body)
 		urlsList := []string{}
 
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("parser error", err)
 		}
 
 
@@ -138,11 +140,13 @@ func parser(
 	}
 }
 
-func writer(result chan string, resultFile *os.File) {
+func writer(result chan string, resultFile *os.File, mx *sync.RWMutex) {
 	for {
+		mx.Lock()
 		if _, err := resultFile.WriteString(<- result); err != nil {
 			fmt.Println(err)
 		}
+		mx.Unlock()
 	}
 }
 
@@ -151,7 +155,7 @@ func main() {
 	start := time.Now()
 
 
-	//var wg sync.WaitGroup
+	var wg sync.WaitGroup
 	var buffer bytes.Buffer
 	urls := make(chan string)
 	body := make(chan Backlink)
@@ -170,16 +174,17 @@ func main() {
 	//wgCounter := 2*workersCount+1
 	//fmt.Println("wgCounter", wgCounter)
 	//
-	//wg.Add(5)
 	urlsList := getInitUrls()
 	currentDepth = 1
 
+	wg.Add(maxDepth)
 	go setToQueue(urls, urlsList)
 	for i:=0;i<workersCount;i++ {
 		go crawler(urls, body)
-		go parser(urls, body, result, &currentDepth, maxDepth)
+		go parser(urls, body, result, &currentDepth, maxDepth, &wg)
 	}
-	go writer(result, resultFile)
+	mx := sync.RWMutex{}
+	go writer(result, resultFile, &mx)
 	//wg.Wait()
 	//fmt.Println("end")
 	//
