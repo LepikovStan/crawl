@@ -7,43 +7,53 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"io"
 	"strings"
-	"strconv"
 	"flag"
 	//"sync"
 	"os"
-	"bytes"
 	"sync"
+	"bufio"
 )
 
 var refsCount int
 
-func getInitUrls() []string {
-	sitesList := []string{
-		//"http://calm.com",
-		//"http://donothingfor2minutes.com/",
-		//"https://hosting.reg.ru/",
-		//"http://stenadobra.ru/",
-		"http://humandescent.com",
-		 //"http://thefirstworldwidewebsitewerenothinghappens.com",
-		// "http://button.dekel.ru",
-		// "http://www.randominio.com/",
-		// "http://thenicestplaceontheinter.net/",
-		// "http://www.catsthatlooklikehitler.com/",
-		// "http://www.thefirstworldwidewebsitewerenothinghappens.com/",
-		// "http://www.donothingfor2minutes.com/",
-		// "http://www.howmanypeopleareinspacerightnow.com/",
-		// "http://www.humanclock.com/",
-		// "http://fucking-great-advice.ru/",
-		// "http://www.cesmes.fi/pallo.swf",
-		// "http://button.dekel.ru/",
-		// "http://www.rainfor.me/",
-		// "http://loudportraits.com/",
-		// "http://sprosimamu.ru/",
-		// "http://www.bandofbridges.com/",
-		// "http://www.catsboobs.com/",
-		// "http://www.incredibox.com/",
+func getInitUrls(urls chan string) {
+	file, _ := os.Open("input.txt")
+	f := bufio.NewReader(file)
+	for {
+		read_line, _ := f.ReadString('\n')
+		fmt.Println("ae", read_line)
+		if read_line != "" {
+			go setToQueue(urls, []string{read_line})
+		}
 	}
-	return sitesList
+	fmt.Println("ae 1")
+	file.Close()
+	//sitesList := []string{
+	//	//"http://calm.com",
+	//	//"http://donothingfor2minutes.com/",
+	//	//"https://hosting.reg.ru/",
+	//	//"http://stenadobra.ru/",
+	//	"http://humandescent.com",
+	//	 //"http://thefirstworldwidewebsitewerenothinghappens.com",
+	//	// "http://button.dekel.ru",
+	//	// "http://www.randominio.com/",
+	//	// "http://thenicestplaceontheinter.net/",
+	//	// "http://www.catsthatlooklikehitler.com/",
+	//	// "http://www.thefirstworldwidewebsitewerenothinghappens.com/",
+	//	// "http://www.donothingfor2minutes.com/",
+	//	// "http://www.howmanypeopleareinspacerightnow.com/",
+	//	// "http://www.humanclock.com/",
+	//	// "http://fucking-great-advice.ru/",
+	//	// "http://www.cesmes.fi/pallo.swf",
+	//	// "http://button.dekel.ru/",
+	//	// "http://www.rainfor.me/",
+	//	// "http://loudportraits.com/",
+	//	// "http://sprosimamu.ru/",
+	//	// "http://www.bandofbridges.com/",
+	//	// "http://www.catsboobs.com/",
+	//	// "http://www.incredibox.com/",
+	//}
+	//return sitesList
 }
 
 type Ref struct {
@@ -106,7 +116,7 @@ func parser(
 		backlink := <- body
 
 		doc, err := goquery.NewDocumentFromReader(backlink.Body)
-		urlsList := []string{}
+		var urlsList []string
 
 		if err != nil {
 			fmt.Println("parser error", err)
@@ -118,16 +128,10 @@ func parser(
 			if (!strings.HasPrefix(Href, "http")) {
 				return
 			}
-			// Title := strings.TrimSpace(s.Text())
 			urlsList = append(urlsList, Href)
 
 			fmt.Println("   ", backlink.Url, "->", Href)
-			var buffer bytes.Buffer
-			buffer.WriteString(backlink.Url)
-			buffer.WriteString(" -> ")
-			buffer.WriteString(Href)
-			buffer.WriteString("\n")
-			result <- buffer.String()
+			result <- fmt.Sprintf("%s -> %s\n", backlink.Url, Href)
 			refsCount++
 		})
 		if (*currentDepth < maxDepth) {
@@ -156,15 +160,12 @@ func main() {
 
 
 	var wg sync.WaitGroup
-	var buffer bytes.Buffer
 	urls := make(chan string)
 	body := make(chan Backlink)
 	result := make(chan string)
 
-	buffer.WriteString("result.")
-	buffer.WriteString(strconv.FormatInt(time.Now().Unix(), 10))
-	buffer.WriteString(".log")
-	resultFile, err := os.OpenFile(buffer.String(), os.O_APPEND|os.O_CREATE, 0755)
+	fileName := fmt.Sprintf("result.%d.log", time.Now().Unix())
+	resultFile, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE, 0755)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -174,11 +175,12 @@ func main() {
 	//wgCounter := 2*workersCount+1
 	//fmt.Println("wgCounter", wgCounter)
 	//
-	urlsList := getInitUrls()
+	//urlsList := getInitUrls()
+	go getInitUrls(urls)
 	currentDepth = 1
 
 	wg.Add(maxDepth)
-	go setToQueue(urls, urlsList)
+	//go setToQueue(urls, urlsList)
 	for i:=0;i<workersCount;i++ {
 		go crawler(urls, body)
 		go parser(urls, body, result, &currentDepth, maxDepth, &wg)
